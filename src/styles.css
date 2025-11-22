@@ -1,0 +1,76 @@
+:root {
+  --bg: radial-gradient(circle at 20% 20%, #1c1f2a, #0f1118 55%);
+  --card: rgba(19, 23, 32, 0.7);
+  --text: #f5f6fb;
+  --accent: #ffcf7d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Manrope', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+}
+
+.ui {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  z-index: 2;
+  padding: 14px 16px;
+  background: var(--card);
+  backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(120deg, #ffcf7d, #ff8f70);
+  color: #0e0b0b;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(255, 143, 112, 0.35);
+}
+
+.title {
+  margin: 10px 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.hint {
+  margin: 0;
+  opacity: 0.8;
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .ui {
+    top: 16px;
+    left: 12px;
+    right: 12px;
+    padding: 12px 14px;
+  }
+
+  .title {
+    font-size: 18px;
+  }
+}
