@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>3D 物理沙漏模拟器</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <div>
+          <p class="app__eyebrow">3D 物理沙漏模拟器</p>
+          <h1>随手翻转，掌控每一粒沙</h1>
+          <p class="app__subtitle">支持触控与跨端体验，轻触沙漏即可翻转。</p>
+        </div>
+        <div class="app__controls">
+          <label class="control">
+            <span>沙粒数量</span>
+            <input id="particleRange" type="range" min="200" max="2400" step="50" value="1200" />
+          </label>
+          <div class="control__value" id="particleValue">1200 粒</div>
+          <button class="button" id="flipButton" type="button">翻转沙漏</button>
+        </div>
+      </header>
+      <section class="app__canvas">
+        <canvas id="hourglass"></canvas>
+        <div class="hint">拖动旋转视角 · 点击/轻触沙漏翻转</div>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
