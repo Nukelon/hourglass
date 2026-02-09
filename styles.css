@@ -121,9 +121,9 @@ h1 {
   width: min(88vw, 720px);
   transform: translateX(-50%);
   display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
-  gap: 8px 12px;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto auto;
+  gap: 8px;
   align-items: center;
   border-radius: 18px;
   padding: 11px 12px;
@@ -132,22 +132,40 @@ h1 {
   border: 1px solid rgba(255, 255, 255, 0.75);
 }
 
-.flip-btn {
-  grid-row: span 2;
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.flip-btn,
+.reset-btn {
   border: 0;
   border-radius: 12px;
-  padding: 10px 16px;
+  padding: 10px 14px;
   color: #f2f7f8;
   font-weight: 700;
-  font-size: 0.96rem;
-  background: linear-gradient(160deg, #2a6f76, var(--accent));
+  font-size: 0.91rem;
   cursor: pointer;
   transition: transform 160ms ease, background 160ms ease;
+}
+
+.flip-btn {
+  background: linear-gradient(160deg, #2a6f76, var(--accent));
+}
+
+.reset-btn {
+  background: linear-gradient(160deg, #7d5a3c, #5f422e);
 }
 
 .flip-btn:active {
   transform: translateY(1px) scale(0.985);
   background: linear-gradient(160deg, #235f64, var(--accent-press));
+}
+
+.reset-btn:active {
+  transform: translateY(1px) scale(0.985);
+  background: linear-gradient(160deg, #66472f, #4d3526);
 }
 
 .control-card label {
@@ -183,13 +201,13 @@ h1 {
   }
 
   .control-card {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
     width: min(90vw, 440px);
   }
+}
 
-  .flip-btn {
-    grid-row: auto;
+@media (max-width: 420px) {
+  .button-row {
+    grid-template-columns: 1fr;
   }
 }
 

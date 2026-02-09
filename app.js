@@ -3,10 +3,11 @@
 (() => {
   const canvas = document.getElementById("hourglassCanvas");
   const flipButton = document.getElementById("flipButton");
+  const resetButton = document.getElementById("resetButton");
   const grainSlider = document.getElementById("grainCount");
   const grainLabel = document.getElementById("grainCountLabel");
 
-  if (!canvas || !flipButton || !grainSlider || !grainLabel) {
+  if (!canvas || !flipButton || !resetButton || !grainSlider || !grainLabel) {
     return;
   }
 
@@ -21,23 +22,32 @@
     bodyRadius: 0.82,
     neckRadius: 0.09,
     neckBand: 0.06,
-    grainRadius: 0.017,
-    gravity: 5.7,
-    airDrag: 0.992,
-    wallBounce: 0.18,
-    capBounce: 0.26,
-    wallFriction: 0.986,
-    surfaceFriction: 0.92,
-    flowFactor: 0.017,
+    grainRadius: 0.0158,
+    gravity: 6.1,
+    airDrag: 0.989,
+    wallBounce: 0.08,
+    capBounce: 0.12,
+    wallFriction: 0.965,
+    surfaceFriction: 0.83,
+    flowFactor: 0.012,
     cameraDistance: 3.8,
     viewYaw: -0.53,
     viewPitch: 0.27,
-    flipSpring: 24,
-    flipDamping: 8.6,
-    cellSize: 0.05,
-    hashBound: 1.4,
-    hashOffset: 200,
-    collisionThreshold: 980
+    flipSpring: 22,
+    flipDamping: 7.8,
+    dragRotateSpeedX: 0.0105,
+    dragRotateSpeedY: 0.0068,
+    cellSize: 0.038,
+    hashBound: 1.45,
+    hashOffset: 220,
+    collisionRestitution: 0.035,
+    collisionFriction: 0.34,
+    collisionPush: 0.88,
+    collisionPassesLow: 4,
+    collisionPassesMid: 3,
+    collisionPassesHigh: 2,
+    sleepSpeed: 0.065,
+    sleepDamping: 0.72
   };
   config.coneSlope = (config.bodyRadius - config.neckRadius) / config.halfHeight;
   config.invCellSize = 1 / config.cellSize;
@@ -52,7 +62,8 @@
 
   const state = {
     grains: [],
-    targetCount: Number(grainSlider.value) || 900,
+    targetCount: Number(grainSlider.value) || 8000,
+    defaultCount: Number(grainSlider.defaultValue) || Number(grainSlider.value) || 8000,
     angle: 0,
     angleVel: 0,
     targetAngle: 0,
@@ -60,7 +71,13 @@
     lastFrameTime: performance.now(),
     startX: 0,
     startY: 0,
+    lastPointerX: 0,
+    lastPointerY: 0,
+    activePointerId: -1,
     pointerDown: false,
+    dragMoved: false,
+    dragVelocity: 0,
+    lastDragTime: 0,
     lastTapTime: 0
   };
 
@@ -85,6 +102,12 @@
     return Math.max(min, Math.min(max, v));
   }
 
+  const sliderMin = Number(grainSlider.min) || 500;
+  const sliderMax = Number(grainSlider.max) || 26000;
+  state.defaultCount = clamp(Math.round(state.defaultCount), sliderMin, sliderMax);
+  state.targetCount = clamp(Math.round(state.targetCount), sliderMin, sliderMax);
+  grainSlider.value = String(state.targetCount);
+
   function radiusAt(y) {
     const t = clamp(Math.abs(y) / config.halfHeight, 0, 1);
     return config.neckRadius + (config.bodyRadius - config.neckRadius) * t;
@@ -92,6 +115,24 @@
 
   function toCellKey(ix, iy, iz) {
     return (ix + config.hashOffset) | ((iy + config.hashOffset) << 9) | ((iz + config.hashOffset) << 18);
+  }
+
+  function nearestUprightAngle(angle) {
+    return Math.round(angle / Math.PI) * Math.PI;
+  }
+
+  function nearestEquivalentAngle(baseAngle, referenceAngle) {
+    return baseAngle + TAU * Math.round((referenceAngle - baseAngle) / TAU);
+  }
+
+  function collisionPassesForCount(count) {
+    if (count > 18000) {
+      return config.collisionPassesHigh;
+    }
+    if (count > 9000) {
+      return config.collisionPassesMid;
+    }
+    return config.collisionPassesLow;
   }
 
   function feedChamberSign() {
@@ -134,9 +175,7 @@
   }
 
   function setGrainCount(nextCount) {
-    const min = Number(grainSlider.min) || 200;
-    const max = Number(grainSlider.max) || 1400;
-    const target = clamp(Math.round(nextCount), min, max);
+    const target = clamp(Math.round(nextCount), sliderMin, sliderMax);
     const current = state.grains.length;
 
     if (target === current) {
@@ -203,85 +242,119 @@
 
   function resolveCollisions() {
     const grains = state.grains;
-    collisionBuckets.clear();
-
-    for (let i = 0; i < grains.length; i += 1) {
-      const grain = grains[i];
-      grain.ix = Math.floor((grain.x + config.hashBound) * config.invCellSize);
-      grain.iy = Math.floor((grain.y + config.hashBound) * config.invCellSize);
-      grain.iz = Math.floor((grain.z + config.hashBound) * config.invCellSize);
-
-      const key = toCellKey(grain.ix, grain.iy, grain.iz);
-      let bucket = collisionBuckets.get(key);
-      if (!bucket) {
-        bucket = [];
-        collisionBuckets.set(key, bucket);
-      }
-      bucket.push(i);
+    if (grains.length < 2) {
+      return;
     }
 
     const minDist = config.grainRadius * 2;
     const minDistSq = minDist * minDist;
-    const restitution = 0.12;
+    const restitution = config.collisionRestitution;
+    const friction = config.collisionFriction;
+    const sleepSpeedSq = config.sleepSpeed * config.sleepSpeed;
+    const passes = collisionPassesForCount(grains.length);
 
-    for (let i = 0; i < grains.length; i += 1) {
-      const a = grains[i];
+    for (let pass = 0; pass < passes; pass += 1) {
+      collisionBuckets.clear();
 
-      for (let n = 0; n < neighborOffsets.length; n += 1) {
-        const off = neighborOffsets[n];
-        const key = toCellKey(a.ix + off.dx, a.iy + off.dy, a.iz + off.dz);
-        const bucket = collisionBuckets.get(key);
+      for (let i = 0; i < grains.length; i += 1) {
+        const grain = grains[i];
+        grain.ix = Math.floor((grain.x + config.hashBound) * config.invCellSize);
+        grain.iy = Math.floor((grain.y + config.hashBound) * config.invCellSize);
+        grain.iz = Math.floor((grain.z + config.hashBound) * config.invCellSize);
+
+        const key = toCellKey(grain.ix, grain.iy, grain.iz);
+        let bucket = collisionBuckets.get(key);
         if (!bucket) {
-          continue;
+          bucket = [];
+          collisionBuckets.set(key, bucket);
         }
+        bucket.push(i);
+      }
 
-        for (let bIdx = 0; bIdx < bucket.length; bIdx += 1) {
-          const j = bucket[bIdx];
-          if (j <= i) {
+      for (let i = 0; i < grains.length; i += 1) {
+        const a = grains[i];
+
+        for (let n = 0; n < neighborOffsets.length; n += 1) {
+          const off = neighborOffsets[n];
+          const key = toCellKey(a.ix + off.dx, a.iy + off.dy, a.iz + off.dz);
+          const bucket = collisionBuckets.get(key);
+          if (!bucket) {
             continue;
           }
 
-          const b = grains[j];
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const dz = b.z - a.z;
-          const distSq = dx * dx + dy * dy + dz * dz;
-          if (distSq >= minDistSq || distSq <= 1e-8) {
-            continue;
-          }
+          for (let bIdx = 0; bIdx < bucket.length; bIdx += 1) {
+            const j = bucket[bIdx];
+            if (j <= i) {
+              continue;
+            }
 
-          const dist = Math.sqrt(distSq);
-          const overlap = (minDist - dist) * 0.5;
-          const nx = dx / dist;
-          const ny = dy / dist;
-          const nz = dz / dist;
+            const b = grains[j];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const dz = b.z - a.z;
+            const distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq >= minDistSq || distSq <= 1e-9) {
+              continue;
+            }
 
-          a.x -= nx * overlap;
-          a.y -= ny * overlap;
-          a.z -= nz * overlap;
-          b.x += nx * overlap;
-          b.y += ny * overlap;
-          b.z += nz * overlap;
+            const dist = Math.sqrt(distSq);
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const nz = dz / dist;
+            const overlap = minDist - dist;
+            const correction = overlap * config.collisionPush * 0.5;
 
-          const rvx = b.vx - a.vx;
-          const rvy = b.vy - a.vy;
-          const rvz = b.vz - a.vz;
-          const rel = rvx * nx + rvy * ny + rvz * nz;
-          if (rel < 0) {
-            const impulse = -(1 + restitution) * rel * 0.5;
-            a.vx -= impulse * nx;
-            a.vy -= impulse * ny;
-            a.vz -= impulse * nz;
-            b.vx += impulse * nx;
-            b.vy += impulse * ny;
-            b.vz += impulse * nz;
+            a.x -= nx * correction;
+            a.y -= ny * correction;
+            a.z -= nz * correction;
+            b.x += nx * correction;
+            b.y += ny * correction;
+            b.z += nz * correction;
+
+            const rvx = b.vx - a.vx;
+            const rvy = b.vy - a.vy;
+            const rvz = b.vz - a.vz;
+            const rel = rvx * nx + rvy * ny + rvz * nz;
+            if (rel < 0) {
+              const normalImpulse = -(1 + restitution) * rel * 0.5;
+              a.vx -= normalImpulse * nx;
+              a.vy -= normalImpulse * ny;
+              a.vz -= normalImpulse * nz;
+              b.vx += normalImpulse * nx;
+              b.vy += normalImpulse * ny;
+              b.vz += normalImpulse * nz;
+
+              const tvx = rvx - rel * nx;
+              const tvy = rvy - rel * ny;
+              const tvz = rvz - rel * nz;
+              const tangentSpeed = Math.hypot(tvx, tvy, tvz);
+              if (tangentSpeed > 1e-8) {
+                const tx = tvx / tangentSpeed;
+                const ty = tvy / tangentSpeed;
+                const tz = tvz / tangentSpeed;
+                const jt = -Math.min(normalImpulse * friction, tangentSpeed * 0.5);
+                a.vx -= jt * tx;
+                a.vy -= jt * ty;
+                a.vz -= jt * tz;
+                b.vx += jt * tx;
+                b.vy += jt * ty;
+                b.vz += jt * tz;
+              }
+            }
           }
         }
       }
-    }
 
-    for (let i = 0; i < grains.length; i += 1) {
-      applyBoundary(grains[i]);
+      for (let i = 0; i < grains.length; i += 1) {
+        const grain = grains[i];
+        applyBoundary(grain);
+        const speedSq = grain.vx * grain.vx + grain.vy * grain.vy + grain.vz * grain.vz;
+        if (speedSq < sleepSpeedSq) {
+          grain.vx *= config.sleepDamping;
+          grain.vy *= config.sleepDamping;
+          grain.vz *= config.sleepDamping;
+        }
+      }
     }
   }
 
@@ -339,16 +412,14 @@
           ? config.halfHeight - config.grainRadius
           : -config.halfHeight + config.grainRadius;
         if (Math.abs(grain.y - floorY) < config.grainRadius * 2.2) {
-          grain.vx *= 0.9;
-          grain.vy *= 0.58;
-          grain.vz *= 0.9;
+          grain.vx *= 0.82;
+          grain.vy *= 0.38;
+          grain.vz *= 0.82;
         }
       }
     }
 
-    if (grains.length <= config.collisionThreshold) {
-      resolveCollisions();
-    }
+    resolveCollisions();
   }
 
   function updateFlip(dt) {
@@ -396,7 +467,7 @@
     ctx.restore();
   }
 
-  function drawRing(y, ringRadius, segments, sinFlip, cosFlip, strokeStyle, lineWidth) {
+  function traceRingPath(y, ringRadius, segments, sinFlip, cosFlip) {
     let started = false;
     ctx.beginPath();
     for (let i = 0; i <= segments; i += 1) {
@@ -414,10 +485,18 @@
       }
     }
     if (started) {
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = lineWidth;
-      ctx.stroke();
+      ctx.closePath();
     }
+    return started;
+  }
+
+  function drawRing(y, ringRadius, segments, sinFlip, cosFlip, strokeStyle, lineWidth) {
+    if (!traceRingPath(y, ringRadius, segments, sinFlip, cosFlip)) {
+      return;
+    }
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
   }
 
   function drawMeridian(phi, sinFlip, cosFlip, strokeStyle, lineWidth) {
@@ -471,6 +550,40 @@
     drawRing(0, config.neckRadius, 34, sinFlip, cosFlip, "rgba(237, 255, 250, 0.55)", 1.8);
   }
 
+  function drawGlassCaps(sinFlip, cosFlip) {
+    const capRadius = config.bodyRadius * 1.015;
+    const capLevels = [config.halfHeight, -config.halfHeight];
+    for (let i = 0; i < capLevels.length; i += 1) {
+      const y = capLevels[i];
+      if (!traceRingPath(y, capRadius, 46, sinFlip, cosFlip)) {
+        continue;
+      }
+      if (projectPoint(0, y, 0, sinFlip, cosFlip, projectTmp) &&
+          projectPoint(capRadius * 0.94, y, 0, sinFlip, cosFlip, projectTmpB)) {
+        const pxRadius = Math.hypot(projectTmpB.x - projectTmp.x, projectTmpB.y - projectTmp.y);
+        const grad = ctx.createRadialGradient(
+          projectTmp.x - pxRadius * 0.38,
+          projectTmp.y - pxRadius * 0.34,
+          pxRadius * 0.14,
+          projectTmp.x,
+          projectTmp.y,
+          pxRadius * 1.08
+        );
+        grad.addColorStop(0, "rgba(250, 227, 194, 0.68)");
+        grad.addColorStop(0.45, "rgba(184, 126, 83, 0.56)");
+        grad.addColorStop(1, "rgba(110, 72, 47, 0.48)");
+        ctx.fillStyle = grad;
+      } else {
+        ctx.fillStyle = "rgba(161, 108, 70, 0.48)";
+      }
+      ctx.fill();
+      ctx.strokeStyle = "rgba(118, 77, 49, 0.68)";
+      ctx.lineWidth = 1.55;
+      ctx.stroke();
+      drawRing(y, capRadius * 0.82, 42, sinFlip, cosFlip, "rgba(251, 234, 206, 0.42)", 1.05);
+    }
+  }
+
   function drawBaseRims(sinFlip, cosFlip) {
     drawRing(config.halfHeight * 1.04, config.bodyRadius * 1.08, 36, sinFlip, cosFlip, "rgba(59, 87, 90, 0.24)", 2.8);
     drawRing(-config.halfHeight * 1.04, config.bodyRadius * 1.08, 36, sinFlip, cosFlip, "rgba(59, 87, 90, 0.24)", 2.8);
@@ -520,7 +633,8 @@
   function drawHUD() {
     const gy = Math.cos(state.angle);
     const dir = gy >= 0 ? "上方流向下方" : "下方流向上方";
-    const text = `${state.grains.length} 粒 · ${dir}`;
+    const tiltDeg = ((state.angle % TAU) + TAU) % TAU * (180 / Math.PI);
+    const text = `${state.grains.length} 粒 · ${dir} · 倾角 ${tiltDeg.toFixed(0)}°`;
 
     ctx.save();
     ctx.font = "600 12px 'Avenir Next', 'Trebuchet MS', sans-serif";
@@ -539,39 +653,108 @@
 
     drawGroundShadow();
     drawGlass(sinFlip, cosFlip);
-    drawBaseRims(sinFlip, cosFlip);
     drawGrains(sinFlip, cosFlip);
+    drawGlassCaps(sinFlip, cosFlip);
+    drawBaseRims(sinFlip, cosFlip);
     drawHUD();
   }
 
   function flipHourglass() {
-    state.targetAngle += Math.PI;
+    const upright = nearestUprightAngle(state.angle);
+    const opposite = upright + Math.PI;
+    state.targetAngle = nearestEquivalentAngle(opposite, state.angle);
   }
 
-  function onGestureEnd(endX, endY) {
-    const dx = endX - state.startX;
-    const dy = endY - state.startY;
-    const distSq = dx * dx + dy * dy;
-    const now = performance.now();
+  function resetHourglass() {
+    state.pointerDown = false;
+    state.dragMoved = false;
+    state.dragVelocity = 0;
+    state.activePointerId = -1;
+    state.angle = 0;
+    state.targetAngle = 0;
+    state.angleVel = 0;
+    state.flowBudget = 0;
+    state.lastTapTime = 0;
+    state.lastFrameTime = performance.now();
+    state.targetCount = state.defaultCount;
+    grainSlider.value = String(state.defaultCount);
+    grainLabel.textContent = String(state.defaultCount);
+    refillGrains(state.defaultCount);
+  }
 
-    if (Math.abs(dy) > 54 || Math.abs(dx) > 118) {
+  function onTap() {
+    const now = performance.now();
+    if (now - state.lastTapTime < 320) {
       flipHourglass();
       state.lastTapTime = 0;
+    } else {
+      state.lastTapTime = now;
+    }
+  }
+
+  function beginDrag(clientX, clientY, pointerId, timeStamp) {
+    state.pointerDown = true;
+    state.activePointerId = pointerId;
+    state.startX = clientX;
+    state.startY = clientY;
+    state.lastPointerX = clientX;
+    state.lastPointerY = clientY;
+    state.dragMoved = false;
+    state.dragVelocity = 0;
+    state.lastDragTime = timeStamp;
+    state.angleVel = 0;
+    state.targetAngle = state.angle;
+  }
+
+  function moveDrag(clientX, clientY, timeStamp) {
+    if (!state.pointerDown) {
       return;
     }
 
-    if (distSq < 256) {
-      if (now - state.lastTapTime < 320) {
-        flipHourglass();
-        state.lastTapTime = 0;
-      } else {
-        state.lastTapTime = now;
-      }
+    const dx = clientX - state.lastPointerX;
+    const dy = clientY - state.lastPointerY;
+    const totalDx = clientX - state.startX;
+    const totalDy = clientY - state.startY;
+    if (!state.dragMoved && totalDx * totalDx + totalDy * totalDy > 25) {
+      state.dragMoved = true;
+      state.lastTapTime = 0;
     }
+
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+
+    const deltaAngle = dx * config.dragRotateSpeedX - dy * config.dragRotateSpeedY;
+    state.angle += deltaAngle;
+    state.targetAngle = state.angle;
+
+    if (state.lastDragTime > 0) {
+      const dt = Math.max(1, timeStamp - state.lastDragTime) / 1000;
+      state.dragVelocity = deltaAngle / dt;
+    }
+    state.lastDragTime = timeStamp;
+    state.lastPointerX = clientX;
+    state.lastPointerY = clientY;
+  }
+
+  function endDrag(clientX, clientY, timeStamp) {
+    moveDrag(clientX, clientY, timeStamp);
+    state.pointerDown = false;
+    state.activePointerId = -1;
+
+    if (!state.dragMoved) {
+      onTap();
+      return;
+    }
+
+    state.targetAngle = state.angle;
+    state.angleVel = clamp(state.dragVelocity * 0.22, -8.2, 8.2);
+    state.dragVelocity = 0;
   }
 
   function bindInputEvents() {
     flipButton.addEventListener("click", flipHourglass);
+    resetButton.addEventListener("click", resetHourglass);
 
     grainSlider.addEventListener("input", () => {
       state.targetCount = Number(grainSlider.value);
@@ -583,47 +766,94 @@
       if (event.code === "Space" || event.key === "f" || event.key === "F") {
         event.preventDefault();
         flipHourglass();
+      } else if (event.key === "r" || event.key === "R") {
+        event.preventDefault();
+        resetHourglass();
       }
     });
 
     if ("PointerEvent" in window) {
       canvas.addEventListener("pointerdown", (event) => {
-        state.pointerDown = true;
-        state.startX = event.clientX;
-        state.startY = event.clientY;
+        if (event.button !== 0) {
+          return;
+        }
+        beginDrag(event.clientX, event.clientY, event.pointerId, event.timeStamp || performance.now());
         canvas.setPointerCapture(event.pointerId);
-      }, { passive: true });
+        event.preventDefault();
+      }, { passive: false });
+
+      canvas.addEventListener("pointermove", (event) => {
+        if (!state.pointerDown || event.pointerId !== state.activePointerId) {
+          return;
+        }
+        moveDrag(event.clientX, event.clientY, event.timeStamp || performance.now());
+        event.preventDefault();
+      }, { passive: false });
 
       canvas.addEventListener("pointerup", (event) => {
-        if (!state.pointerDown) {
+        if (!state.pointerDown || event.pointerId !== state.activePointerId) {
+          return;
+        }
+        endDrag(event.clientX, event.clientY, event.timeStamp || performance.now());
+        if (canvas.hasPointerCapture(event.pointerId)) {
+          canvas.releasePointerCapture(event.pointerId);
+        }
+        event.preventDefault();
+      }, { passive: false });
+
+      canvas.addEventListener("pointercancel", (event) => {
+        if (event.pointerId !== state.activePointerId) {
           return;
         }
         state.pointerDown = false;
-        onGestureEnd(event.clientX, event.clientY);
-      }, { passive: true });
-
-      canvas.addEventListener("pointercancel", () => {
-        state.pointerDown = false;
+        state.dragMoved = false;
+        state.dragVelocity = 0;
+        state.activePointerId = -1;
       }, { passive: true });
     } else {
       canvas.addEventListener("touchstart", (event) => {
-        if (!event.changedTouches || !event.changedTouches.length) {
+        if (!event.changedTouches || !event.changedTouches.length || state.pointerDown) {
           return;
         }
         const t = event.changedTouches[0];
-        state.startX = t.clientX;
-        state.startY = t.clientY;
+        beginDrag(t.clientX, t.clientY, t.identifier, performance.now());
         event.preventDefault();
       }, { passive: false });
 
-      canvas.addEventListener("touchend", (event) => {
-        if (!event.changedTouches || !event.changedTouches.length) {
+      canvas.addEventListener("touchmove", (event) => {
+        if (!state.pointerDown) {
           return;
         }
-        const t = event.changedTouches[0];
-        onGestureEnd(t.clientX, t.clientY);
-        event.preventDefault();
+        for (let i = 0; i < event.changedTouches.length; i += 1) {
+          const t = event.changedTouches[i];
+          if (t.identifier === state.activePointerId) {
+            moveDrag(t.clientX, t.clientY, performance.now());
+            event.preventDefault();
+            break;
+          }
+        }
       }, { passive: false });
+
+      canvas.addEventListener("touchend", (event) => {
+        if (!event.changedTouches || !event.changedTouches.length || !state.pointerDown) {
+          return;
+        }
+        for (let i = 0; i < event.changedTouches.length; i += 1) {
+          const t = event.changedTouches[i];
+          if (t.identifier === state.activePointerId) {
+            endDrag(t.clientX, t.clientY, performance.now());
+            event.preventDefault();
+            break;
+          }
+        }
+      }, { passive: false });
+
+      canvas.addEventListener("touchcancel", () => {
+        state.pointerDown = false;
+        state.dragMoved = false;
+        state.dragVelocity = 0;
+        state.activePointerId = -1;
+      }, { passive: true });
     }
   }
 
@@ -652,7 +882,8 @@
     state.lastFrameTime = now;
 
     updateFlip(dt);
-    const subSteps = state.grains.length > 1100 ? 1 : 2;
+    const count = state.grains.length;
+    const subSteps = count > 22000 ? 2 : count > 12000 ? 3 : 4;
     const stepDt = dt / subSteps;
     for (let i = 0; i < subSteps; i += 1) {
       updateSimulation(stepDt);
