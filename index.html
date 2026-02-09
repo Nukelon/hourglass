@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ChronoGlass 3D 沙漏模拟器</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+  <main class="app-shell">
+    <header class="title-row">
+      <div>
+        <p class="eyebrow">ChronoGlass</p>
+        <h1>3D 物理沙漏模拟器</h1>
+      </div>
+      <p class="subtitle">手动翻转 · 粒子数量可调 · 多端兼容</p>
+    </header>
+
+    <section class="stage">
+      <canvas id="hourglassCanvas" aria-label="3D沙漏模拟画布"></canvas>
+      <div class="control-card">
+        <button id="flipButton" type="button" class="flip-btn">翻转沙漏</button>
+        <label for="grainCount">沙粒数量 <span id="grainCountLabel">900</span></label>
+        <input id="grainCount" type="range" min="200" max="1400" step="50" value="900">
+      </div>
+    </section>
+
+    <footer class="footer-note">支持触控手势：在画布上上下滑动或双击也可翻转（含 iOS Safari）</footer>
+  </main>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
